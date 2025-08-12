@@ -1,0 +1,2 @@
+This is a test note for the Ollama file browsing tool.
+If the AI reads this, it should return this exact message.
