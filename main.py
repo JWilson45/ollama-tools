@@ -1,57 +1,58 @@
-import ollama
-import pathlib
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from pathlib import Path
+import uvicorn
+import os
 
-def read_file(path: str) -> str:
-    # Restrict reading files to current working directory
-    base_path = pathlib.Path.cwd()
-    file_path = base_path / path
+# FastAPI app that exposes tools via OpenAPI so Open WebUI can call them
+app = FastAPI(
+    title="Local Tools",
+    description="OpenAPI tool server for Open WebUI",
+    version="1.0.0",
+)
+
+# Allow calls from the Open WebUI frontend in your browser (localhost)
+# You can add more origins if needed.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Restrict file access to the directory where the server is launched,
+# or override with the BASE_DIR environment variable if you want.
+BASE = Path(os.getenv("BASE_DIR", ".")).resolve()
+
+class ReadFileArgs(BaseModel):
+    path: str
+
+@app.post("/read_file", operation_id="read_file")
+def read_file(args: ReadFileArgs):
+    """
+    Read a UTF-8 text file relative to BASE (current working directory by default).
+    Returns {"content": "..."} or an error.
+    """
+    fp = (BASE / args.path).resolve()
+    if not str(fp).startswith(str(BASE)):
+        raise HTTPException(status_code=403, detail="Access outside base directory is not allowed.")
     try:
-        file_path = file_path.resolve()
-        if not str(file_path).startswith(str(base_path)):
-            return "Error: Access to the specified file is not allowed."
-        with open(file_path, "r", encoding="utf-8") as f:
-            return f.read()
+        text = fp.read_text(encoding="utf-8")
+        return {"content": text}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"File not found: {args.path}")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=415, detail="Only UTF-8 text files are supported.")
     except Exception as e:
-        return f"Error reading file: {e}"
-
-tools = {
-    "read_file": read_file,
-}
+        raise HTTPException(status_code=500, detail=f"Error reading file: {e}")
 
 def main():
-    user_input = "Read notes.txt in this folder."
-    # First call to ollama.chat with tools as functions
-    resp = ollama.chat(
-        messages=[{"role": "user", "content": user_input}],
-        tools=[read_file],
-        model="qwen3:4b",
-    )
-    # Extract tool calls from resp.message.tool_calls
-    tool_calls = resp.message.tool_calls or []
-    tool_results = {}
-    for call in tool_calls:
-        tool_name = call.function.name
-        tool_args = call.function.arguments or {}
-        if tool_name in tools:
-            result = tools[tool_name](**tool_args)
-            tool_results[tool_name] = result
-        else:
-            tool_results[tool_name] = f"Tool {tool_name} not found."
-
-    # Build follow-up messages with user and assistant messages as dicts
-    followup_messages = [
-        {"role": "user", "content": user_input},
-        {
-            "role": "assistant",
-            "content": resp.message.content,
-            "tool_calls": resp.message.tool_calls
-        }
-    ]
-    for tool_name, result in tool_results.items():
-        followup_messages.append({"role": "tool", "name": tool_name, "content": result})
-
-    final_response = ollama.chat(messages=followup_messages, model="qwen3:4b")
-    print(final_response.message.content)
+    # Allow overriding host/port with env vars if desired
+    host = os.getenv("TOOLS_HOST", "0.0.0.0")
+    port = int(os.getenv("TOOLS_PORT", "8000"))
+    uvicorn.run("main:app", host=host, port=port, reload=False)
 
 if __name__ == "__main__":
     main()
