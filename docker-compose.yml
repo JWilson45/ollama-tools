@@ -11,7 +11,7 @@ services:
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
     volumes:
       - open-webui-data:/app/backend/data
-      - ./tools:/app/backend/tools  # This is where we'll put read_file.py
+    #   - ./openwebui-tools:/app/backend/tools  # This is where we'll put read_file.py
 
 volumes:
   open-webui-data:
